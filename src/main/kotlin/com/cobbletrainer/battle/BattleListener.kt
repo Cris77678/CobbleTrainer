@@ -23,17 +23,12 @@ object BattleListener {
 
             val player = winningPlayer.entity as? ServerPlayerEntity ?: return@subscribe
             
-            // Verificamos si el jugador tenía un desafío activo
             val ctx = TrainerManager.activeChallenges[player.uuid] ?: return@subscribe
 
-            // Verificamos que nuestro NPC fue el que perdió la batalla
             val hasOurNpc = event.battle.actors.any { it.uuid == ctx.npcUuid }
             if (!hasOurNpc) return@subscribe
 
-            // ¡Victoria confirmada! Limpiamos el desafío y damos recompensas
-            TrainerManager.activeChallenges.remove(player.uuid)
             TrainerManager.onBattleWon(player.uuid, ctx.trainerId, ctx.config.cooldownSeconds)
-            
             grantRewards(player, ctx)
         }
 
@@ -55,9 +50,7 @@ object BattleListener {
                         val totalOther = Stats.values().filter { it != cobbleStat }.sumOf { pokemon.evs[it] ?: 0 }
                         val maxForStat = minOf(252, 510 - totalOther)
                         pokemon.evs[cobbleStat] = (current + reward.amount).coerceIn(0, maxForStat)
-                    } catch (e: Exception) {
-                        CobbleTrainerMod.LOGGER.warn("Error al aplicar EVs en ${pokemon.species.name}: ${e.message}")
-                    }
+                    } catch (e: Exception) {}
                 }
             }
         }
