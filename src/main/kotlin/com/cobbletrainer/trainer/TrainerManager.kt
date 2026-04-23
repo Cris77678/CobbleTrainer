@@ -14,7 +14,9 @@ import com.cobblemon.mod.common.battles.actor.PlayerBattleActor
 import com.cobblemon.mod.common.battles.pokemon.BattlePokemon
 import com.cobblemon.mod.common.battles.actor.TrainerBattleActor
 import com.cobblemon.mod.common.battles.ai.RandomBattleAI
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
 import net.fabricmc.loader.api.FabricLoader
+import net.minecraft.entity.decoration.ArmorStandEntity
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
 import java.util.UUID
@@ -32,6 +34,9 @@ object TrainerManager {
 
     // Mapeamos el jugador a su desafío activo.
     val activeChallenges: ConcurrentHashMap<UUID, BattleContext> = ConcurrentHashMap()
+    
+    // Rastreamos las entidades falsas (ArmorStands) para limpiarlas al terminar
+    private val activeDummies: ConcurrentHashMap<UUID, DummyData> = ConcurrentHashMap()
 
     private val cooldownsFile: Path = FabricLoader.getInstance().configDir.resolve("cobbletrainer").resolve("cooldowns.json")
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
@@ -39,6 +44,31 @@ object TrainerManager {
     fun init(server: MinecraftServer) {
         this.server = server
         loadCooldowns()
+        
+        // Loop para limpiar los ArmorStands cuando la batalla termina
+        ServerTickEvents.END_SERVER_TICK.register { srv ->
+            val now = System.currentTimeMillis()
+            val iter = activeDummies.entries.iterator()
+            while (iter.hasNext()) {
+                val entry = iter.next()
+                val data = entry.value
+                
+                // Damos 3 segundos de margen para que la batalla inicie
+                if (now - data.startTime > 3000L) {
+                    val player = srv.playerManager.getPlayer(data.playerUuid)
+                    // Verificamos si el jugador sigue en combate
+                    val inBattle = player != null && Cobblemon.battleRegistry.getBattleByParticipatingPlayer(player) != null
+                    
+                    if (!inBattle) {
+                        // Si ya no está en combate (ganó, perdió o huyó), eliminamos la entidad fantasma
+                        srv.worlds.forEach { world ->
+                            world.getEntity(data.dummyUuid)?.discard()
+                        }
+                        iter.remove()
+                    }
+                }
+            }
+        }
     }
 
     private fun loadCooldowns() {
@@ -73,7 +103,6 @@ object TrainerManager {
     }
 
     private fun createNpcActor(uuid: UUID, name: String, pokemons: List<BattlePokemon>): com.cobblemon.mod.common.api.battles.model.actor.BattleActor {
-        // Instanciamos el actor directamente usando la IA aleatoria nativa de Cobblemon
         return TrainerBattleActor(name, uuid, pokemons, RandomBattleAI())
     }
 
@@ -93,16 +122,31 @@ object TrainerManager {
         if (trainerTeam.isEmpty()) return ChallengeResult.EmptyTeam
 
         return try {
-            // FIX 1.7.3: Usamos playerOwned para el jugador y safeCopyOf para el equipo del NPC
             val playerBattlePokemons = party.toList().map { BattlePokemon.playerOwned(it) }
             val npcBattlePokemons = trainerTeam.map { BattlePokemon.safeCopyOf(it) }
 
             val playerActor = PlayerBattleActor(player.uuid, playerBattlePokemons)
 
-            val npcUuid = UUID.randomUUID()
+            // TRUCO DE LA CÁMARA: Generamos un ArmorStand invisible a 5 bloques de distancia
+            val world = player.serverWorld
+            val distance = 5.0
+            val spawnX = player.x + player.rotationVector.x * distance
+            val spawnY = player.y
+            val spawnZ = player.z + player.rotationVector.z * distance
+
+            val dummy = ArmorStandEntity(world, spawnX, spawnY, spawnZ)
+            dummy.isInvisible = true
+            dummy.isInvulnerable = true
+            dummy.setNoGravity(true)
+            dummy.customName = net.minecraft.text.Text.literal(config.name)
+            world.spawnEntity(dummy)
+
+            // Usamos el UUID de nuestra entidad real para que el cliente la encuentre
+            val npcUuid = dummy.uuid
+            activeDummies[npcUuid] = DummyData(npcUuid, player.uuid, System.currentTimeMillis())
+
             val npcActor = createNpcActor(npcUuid, config.name, npcBattlePokemons)
 
-            // Iniciamos la batalla usando el registro directamente (más compatible entre versiones)
             Cobblemon.battleRegistry.startBattle(
                 BattleFormat.GEN_9_SINGLES,
                 BattleSide(playerActor),
@@ -179,6 +223,12 @@ data class BattleContext(
     val npcUuid: UUID,
     val trainerId: String,
     val config: TrainerConfig
+)
+
+data class DummyData(
+    val dummyUuid: UUID, 
+    val playerUuid: UUID, 
+    val startTime: Long
 )
 
 sealed class ChallengeResult {
