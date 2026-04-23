@@ -23,5 +23,6 @@
     "minecraft": "~${minecraft_version}",
     "fabric-language-kotlin": "*",
     "cobblemon": ">=${cobblemon_version}"
+    "cobblemonnpcs": "*"
   }
 }
