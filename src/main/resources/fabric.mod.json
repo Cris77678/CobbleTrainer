@@ -3,26 +3,24 @@
   "id": "cobbletrainer",
   "version": "${version}",
   "name": "CobbleTrainer",
-  "description": "NPCs de entrenamiento personalizados para PokeLand con recompensas de EVs y EXP.",
-  "authors": ["Cristian Ivan Paredes Salazar"],
-  "contact": {
-    "sources": "https://github.com/cris77678/CobbleTrainer"
-  },
+  "description": "NPC Trainers for Cobblemon",
+  "authors": [
+    "TuNombre"
+  ],
+  "contact": {},
   "license": "MIT",
-  "environment": "server",
+  "icon": "assets/cobbletrainer/icon.png",
+  "environment": "*",
   "entrypoints": {
     "main": [
-      {
-        "adapter": "kotlin",
-        "value": "com.cobbletrainer.CobbleTrainerMod"
-      }
+      "com.cobbletrainer.CobbleTrainerMod"
     ]
   },
   "depends": {
     "fabricloader": ">=${fabric_loader_version}",
     "minecraft": "~${minecraft_version}",
     "fabric-language-kotlin": "*",
-    "cobblemon": ">=${cobblemon_version}"
+    "cobblemon": ">=${cobblemon_version}",
     "cobblemonnpcs": "*"
   }
 }
