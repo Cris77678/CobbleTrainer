@@ -18,6 +18,7 @@ import net.minecraft.server.network.ServerPlayerEntity
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
 import java.nio.file.Path
@@ -26,15 +27,15 @@ object TrainerManager {
 
     private lateinit var server: MinecraftServer
     val cooldowns: ConcurrentHashMap<String, Long> = ConcurrentHashMap()
-    
+
     // Mapeamos el jugador a su desafío activo.
     val activeChallenges: ConcurrentHashMap<UUID, BattleContext> = ConcurrentHashMap()
-    
+
     private val cooldownsFile: Path = FabricLoader.getInstance().configDir.resolve("cobbletrainer").resolve("cooldowns.json")
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
-    fun init(server: MinecraftServer) { 
-        this.server = server 
+    fun init(server: MinecraftServer) {
+        this.server = server
         loadCooldowns()
     }
 
@@ -63,7 +64,7 @@ object TrainerManager {
     }
 
     fun trainerCount() = CobbleTrainerConfig.trainers.size
-    
+
     fun saveAll() {
         CobbleTrainerConfig.save()
         saveCooldowns()
@@ -71,24 +72,43 @@ object TrainerManager {
 
     private fun createNpcActor(uuid: UUID, name: String, pokemons: List<BattlePokemon>): com.cobblemon.mod.common.api.battles.model.actor.BattleActor {
         val clazz = Class.forName("com.cobblemon.mod.common.battles.actor.TrainerBattleActor")
-        val text = net.minecraft.text.Text.literal(name)
-        
-        for (ctor in clazz.constructors) {
-            try {
-                if (ctor.parameterCount == 3) {
-                    return ctor.newInstance(uuid, text, pokemons) as com.cobblemon.mod.common.api.battles.model.actor.BattleActor
+        val battleAiClass = Class.forName("com.cobblemon.mod.common.api.battles.model.ai.BattleAI")
+        val passActionResponseClass = Class.forName("com.cobblemon.mod.common.battles.PassActionResponse")
+        val passActionResponse = passActionResponseClass.getField("INSTANCE").get(null)
+
+        val battleAi = java.lang.reflect.Proxy.newProxyInstance(
+            battleAiClass.classLoader,
+            arrayOf(battleAiClass)
+        ) { proxy, method, args ->
+            when (method.name) {
+                "choose" -> passActionResponse
+                "onHealthChange" -> null
+                "toString" -> "CobbleTrainerBattleAIProxy"
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.getOrNull(0)
+                else -> when (method.returnType) {
+                    java.lang.Boolean.TYPE -> false
+                    java.lang.Byte.TYPE -> 0.toByte()
+                    java.lang.Short.TYPE -> 0.toShort()
+                    java.lang.Integer.TYPE -> 0
+                    java.lang.Long.TYPE -> 0L
+                    java.lang.Float.TYPE -> 0f
+                    java.lang.Double.TYPE -> 0.0
+                    java.lang.Character.TYPE -> '\u0000'
+                    else -> null
                 }
-            } catch (e: Exception) {}
+            }
         }
-        
-        for (ctor in clazz.constructors) {
-            try {
-                if (ctor.parameterCount == 2) {
-                    return ctor.newInstance(uuid, pokemons) as com.cobblemon.mod.common.api.battles.model.actor.BattleActor
-                }
-            } catch (e: Exception) {}
-        }
-        throw IllegalStateException("No se pudo crear el TrainerBattleActor.")
+
+        val ctor = clazz.getConstructor(
+            String::class.java,
+            UUID::class.java,
+            java.util.List::class.java,
+            battleAiClass
+        )
+
+        @Suppress("UNCHECKED_CAST")
+        return ctor.newInstance(name, uuid, pokemons, battleAi) as com.cobblemon.mod.common.api.battles.model.actor.BattleActor
     }
 
     fun challenge(player: ServerPlayerEntity, trainerId: String): ChallengeResult {
@@ -112,7 +132,7 @@ object TrainerManager {
             val npcBattlePokemons = trainerTeam.map { BattlePokemon.safeCopyOf(it) }
 
             val playerActor = PlayerBattleActor(player.uuid, playerBattlePokemons)
-            
+
             val npcUuid = UUID.randomUUID()
             val npcActor = createNpcActor(npcUuid, config.name, npcBattlePokemons)
 
@@ -126,7 +146,7 @@ object TrainerManager {
             // Guardamos el desafío ligado al jugador
             activeChallenges[player.uuid] = BattleContext(npcUuid, config.id, config)
             ChallengeResult.Started
-            
+
         } catch (e: Exception) {
             CobbleTrainerMod.LOGGER.error("Error al iniciar la batalla para ${player.name.string}: ${e.message}", e)
             ChallengeResult.BattleError(e.message ?: "Error desconocido al iniciar.")
@@ -148,7 +168,7 @@ object TrainerManager {
                         (if (entry.nature.isNotBlank()) " nature=${entry.nature}" else "") +
                         (if (entry.ability.isNotBlank()) " ability=${entry.ability}" else "") +
                         (if (entry.heldItem.isNotBlank()) " held_item=${entry.heldItem}" else "")
-                
+
                 val pokemon = PokemonProperties.parse(propStr).create()
 
                 pokemon.ivs[Stats.HP] = entry.ivHp.coerceIn(0, 31)
