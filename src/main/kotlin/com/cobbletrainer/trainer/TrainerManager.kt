@@ -95,7 +95,7 @@ object TrainerManager {
             
             npc.setAiDisabled(true)
             npc.isInvulnerable = true
-            npc.isPersistent = true // NUNCA desaparece al reiniciar el servidor
+            npc.setPersistent() // FIX: Reemplazado isPersistent = true por el método correcto en Yarn
 
             if (!level.spawnEntity(npc)) return ChallengeResult.BattleError("Error al spawnear")
 
@@ -142,7 +142,6 @@ object TrainerManager {
         return try {
             // Asignamos el equipo FRESCO al NPC justo en este milisegundo.
             // Cobblemon hará una copia de este equipo para el combate del jugador.
-            // Así garantizamos que múltiples batallas simultáneas no se mezclen.
             val npcParty = NPCPartyStore(npc)
             trainerTeam.forEachIndexed { i, p -> npcParty.set(i, p) }
             npcParty.initialize()
