@@ -11,13 +11,19 @@ import com.cobblemon.mod.common.pokemon.Pokemon
 import com.cobblemon.mod.common.api.npc.NPCClasses
 import com.cobblemon.mod.common.api.storage.party.NPCPartyStore
 import com.cobblemon.mod.common.entity.npc.NPCEntity
-import com.cobblemon.mod.common.battles.BattleBuilder
+import com.cobblemon.mod.common.battles.BattleFormat
+import com.cobblemon.mod.common.battles.BattleRegistry
+import com.cobblemon.mod.common.battles.BattleSide
+import com.cobblemon.mod.common.battles.actor.PlayerBattleActor
+import com.cobblemon.mod.common.entity.npc.NPCBattleActor
+import com.cobblemon.mod.common.battles.pokemon.BattlePokemon
 import net.fabricmc.fabric.api.event.player.UseEntityCallback
 import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.text.Text
 import net.minecraft.util.ActionResult
+import net.minecraft.util.Hand
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.encodeToString
@@ -41,18 +47,22 @@ object TrainerManager {
         this.server = server
         loadCooldowns()
         
-        // INTERCEPTOR MULTI-HILO: Cualquier jugador puede darle clic al mismo tiempo
         UseEntityCallback.EVENT.register { player, world, hand, entity, hitResult ->
-            if (!world.isClient && entity is NPCEntity && entity.commandTags.contains("cobbletrainer_npc")) {
-                val serverPlayer = player as? ServerPlayerEntity ?: return@register ActionResult.PASS
+            // 1. Filtrar doble clic (Mano principal y secundaria)
+            if (hand != Hand.MAIN_HAND) return@register ActionResult.PASS
+
+            if (entity is NPCEntity && entity.commandTags.contains("cobbletrainer_npc")) {
                 
-                // Extraemos el ID exacto de la configuración que guardamos en la entidad
+                // 2. IMPORTANTE: Avisarle al cliente que la interacción fue exitosa 
+                // para que el brazo haga la animación y no bloquee el evento.
+                if (world.isClient) return@register ActionResult.SUCCESS
+
+                val serverPlayer = player as? ServerPlayerEntity ?: return@register ActionResult.PASS
                 val idTag = entity.commandTags.find { it.startsWith("cobbletrainer_id:") }
                 
                 if (idTag != null) {
                     val trainerId = idTag.substringAfter("cobbletrainer_id:")
                     
-                    // Verificamos que el jugador no esté ya en batalla
                     if (Cobblemon.battleRegistry.getBattleByParticipatingPlayer(serverPlayer) != null) {
                         return@register ActionResult.SUCCESS
                     }
@@ -71,7 +81,6 @@ object TrainerManager {
         }
     }
 
-    // NUEVO: Generar NPC Estático
     fun spawnTrainer(player: ServerPlayerEntity, trainerId: String): ChallengeResult {
         val config = CobbleTrainerConfig.getById(trainerId) ?: return ChallengeResult.NotFound
 
@@ -89,13 +98,12 @@ object TrainerManager {
             npc.customName = Text.literal("§6[Entrenador] §e${config.name}")
             npc.isCustomNameVisible = true
             
-            // Etiquetas esenciales
             npc.addCommandTag("cobbletrainer_npc")
             npc.addCommandTag("cobbletrainer_id:$trainerId")
             
             npc.setAiDisabled(true)
             npc.isInvulnerable = true
-            npc.setPersistent() // FIX: Reemplazado isPersistent = true por el método correcto en Yarn
+            npc.setPersistent()
 
             if (!level.spawnEntity(npc)) return ChallengeResult.BattleError("Error al spawnear")
 
@@ -105,25 +113,23 @@ object TrainerManager {
         }
     }
 
-    // NUEVO: Borrar NPC Buggeado/Frente al jugador
     fun deleteNearestNpc(player: ServerPlayerEntity) {
         val world = player.serverWorld
-        val box = player.boundingBox.expand(4.0) // Busca en un radio de 4 bloques
+        val box = player.boundingBox.expand(4.0)
         val npcs = world.getOtherEntities(player, box) { 
             it is NPCEntity && it.commandTags.contains("cobbletrainer_npc") 
         }
         
         if (npcs.isEmpty()) {
-            player.sendMessage(Text.literal("§cNo hay entrenadores de CobbleTrainer cerca de ti."), false)
+            player.sendMessage(Text.literal("§cNo hay entrenadores cerca de ti."), false)
             return
         }
 
         val nearest = npcs.minByOrNull { it.squaredDistanceTo(player) }
         nearest?.discard()
-        player.sendMessage(Text.literal("§aEntrenador eliminado correctamente del mundo."), false)
+        player.sendMessage(Text.literal("§aEntrenador eliminado."), false)
     }
 
-    // LÓGICA DE BATALLA: Se ejecuta por separado para cada jugador que da clic
     private fun tryChallenge(player: ServerPlayerEntity, npc: NPCEntity, trainerId: String): ChallengeResult {
         val config = CobbleTrainerConfig.getById(trainerId) ?: return ChallengeResult.NotFound
         if (!config.enabled) return ChallengeResult.Disabled
@@ -140,20 +146,36 @@ object TrainerManager {
         if (trainerTeam.isEmpty()) return ChallengeResult.EmptyTeam
 
         return try {
-            // Asignamos el equipo FRESCO al NPC justo en este milisegundo.
-            // Cobblemon hará una copia de este equipo para el combate del jugador.
             val npcParty = NPCPartyStore(npc)
             trainerTeam.forEachIndexed { i, p -> npcParty.set(i, p) }
             npcParty.initialize()
             npc.party = npcParty
 
-            BattleBuilder.pvn(player, npc)
+            // LA FORMA MANUAL Y SEGURA DE INICIAR BATALLAS EN 1.7.1
+            // A) Construir el lado del Jugador (En Kotlin la lambda es simplemente { })
+            val playerBattleParty = party.mapNotNull { p -> 
+                if (p != null) BattlePokemon(p, p) { } else null 
+            }
+            val playerActor = PlayerBattleActor(player.uuid, playerBattleParty)
+            val playerSide = BattleSide(playerActor)
 
-            // Guardamos el contexto específico de ESTE jugador
+            // B) Construir el lado del NPC
+            val npcActor = NPCBattleActor(npc, npcParty, 0)
+            val npcSide = BattleSide(npcActor)
+
+            // C) Iniciar el Registro Oficial
+            BattleRegistry.startBattle(
+                BattleFormat.GEN_9_SINGLES,
+                playerSide,
+                npcSide,
+                isPvP = false
+            )
+
             activeChallenges[player.uuid] = BattleContext(npc.uuid, config.id, config)
             
             ChallengeResult.Started
         } catch (e: Exception) {
+            e.printStackTrace()
             ChallengeResult.BattleError(e.message ?: "Error desconocido")
         }
     }
@@ -167,7 +189,7 @@ object TrainerManager {
                 
                 val pokemon = PokemonProperties.parse(propStr).create()
                 
-                val statsOrder = Stats.values()
+                val statsOrder = Stats.entries.toTypedArray()
                 val ivs = intArrayOf(entry.ivHp, entry.ivAtk, entry.ivDef, entry.ivSpAtk, entry.ivSpDef, entry.ivSpd)
                 statsOrder.forEachIndexed { i, stat -> if(i < 6) pokemon.ivs[stat] = ivs[i] }
 
