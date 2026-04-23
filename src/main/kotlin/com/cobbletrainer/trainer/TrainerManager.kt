@@ -12,7 +12,6 @@ import com.cobblemon.mod.common.api.npc.NPCClasses
 import com.cobblemon.mod.common.api.storage.party.NPCPartyStore
 import com.cobblemon.mod.common.entity.npc.NPCEntity
 import com.cobblemon.mod.common.battles.BattleBuilder
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
 import net.fabricmc.fabric.api.event.player.UseEntityCallback
 import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.server.MinecraftServer
@@ -34,7 +33,6 @@ object TrainerManager {
     private lateinit var server: MinecraftServer
     val cooldowns: ConcurrentHashMap<String, Long> = ConcurrentHashMap()
     val activeChallenges: ConcurrentHashMap<UUID, BattleContext> = ConcurrentHashMap()
-    private val activeNpcs: ConcurrentHashMap<UUID, NpcData> = ConcurrentHashMap()
 
     private val cooldownsFile: Path = FabricLoader.getInstance().configDir.resolve("cobbletrainer").resolve("cooldowns.json")
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
@@ -43,63 +41,39 @@ object TrainerManager {
         this.server = server
         loadCooldowns()
         
-        // INTERCEPTAR CLIC: Forzar inicio de batalla
+        // INTERCEPTOR MULTI-HILO: Cualquier jugador puede darle clic al mismo tiempo
         UseEntityCallback.EVENT.register { player, world, hand, entity, hitResult ->
             if (!world.isClient && entity is NPCEntity && entity.commandTags.contains("cobbletrainer_npc")) {
                 val serverPlayer = player as? ServerPlayerEntity ?: return@register ActionResult.PASS
-                val data = activeNpcs[entity.uuid]
                 
-                if (data != null && data.playerUuid == serverPlayer.uuid) {
-                    if (!data.battleStarted) {
-                        try {
-                            // En Kotlin se llama al método directamente, sin .INSTANCE
-                            BattleBuilder.pvn(serverPlayer, entity)
-                        } catch (e: Exception) {
-                            CobbleTrainerMod.LOGGER.error("Error al iniciar batalla: ${e.message}")
-                        }
+                // Extraemos el ID exacto de la configuración que guardamos en la entidad
+                val idTag = entity.commandTags.find { it.startsWith("cobbletrainer_id:") }
+                
+                if (idTag != null) {
+                    val trainerId = idTag.substringAfter("cobbletrainer_id:")
+                    
+                    // Verificamos que el jugador no esté ya en batalla
+                    if (Cobblemon.battleRegistry.getBattleByParticipatingPlayer(serverPlayer) != null) {
+                        return@register ActionResult.SUCCESS
+                    }
+
+                    val result = tryChallenge(serverPlayer, entity, trainerId)
+                    when (result) {
+                        is ChallengeResult.OnCooldown -> serverPlayer.sendMessage(Text.literal("§cDebes esperar ${result.secondsRemaining}s para la revancha."), false)
+                        is ChallengeResult.NoHealthyPokemon -> serverPlayer.sendMessage(Text.literal("§cNo tienes Pokémon sanos para luchar."), false)
+                        is ChallengeResult.BattleError -> serverPlayer.sendMessage(Text.literal("§cError: ${result.reason}"), false)
+                        else -> {}
                     }
                     return@register ActionResult.SUCCESS
                 }
             }
             ActionResult.PASS
         }
-        
-        // LIMPIEZA DE NPCs
-        ServerTickEvents.END_SERVER_TICK.register { srv ->
-            val now = System.currentTimeMillis()
-            val iter = activeNpcs.entries.iterator()
-            while (iter.hasNext()) {
-                val entry = iter.next()
-                val data = entry.value
-                val player = srv.playerManager.getPlayer(data.playerUuid)
-                val inBattle = player != null && Cobblemon.battleRegistry.getBattleByParticipatingPlayer(player) != null
-                
-                if (inBattle) data.battleStarted = true
-
-                if (!data.battleStarted) {
-                    if (now - data.startTime > 60000L) {
-                        srv.worlds.forEach { it.getEntity(data.npcUuid)?.discard() }
-                        activeChallenges.remove(data.playerUuid)
-                        iter.remove()
-                    }
-                } else if (!inBattle) {
-                    srv.worlds.forEach { it.getEntity(data.npcUuid)?.discard() }
-                    if (data.endTime == 0L) data.endTime = now
-                    else if (now - data.endTime > 2000L) {
-                        activeChallenges.remove(data.playerUuid)
-                        iter.remove()
-                    }
-                }
-            }
-        }
     }
 
-    fun challenge(player: ServerPlayerEntity, trainerId: String): ChallengeResult {
+    // NUEVO: Generar NPC Estático
+    fun spawnTrainer(player: ServerPlayerEntity, trainerId: String): ChallengeResult {
         val config = CobbleTrainerConfig.getById(trainerId) ?: return ChallengeResult.NotFound
-        if (!config.enabled) return ChallengeResult.Disabled
-
-        val trainerTeam = buildTrainerTeam(config)
-        if (trainerTeam.isEmpty()) return ChallengeResult.EmptyTeam
 
         return try {
             val level = player.serverWorld
@@ -115,18 +89,68 @@ object TrainerManager {
             npc.customName = Text.literal("§6[Entrenador] §e${config.name}")
             npc.isCustomNameVisible = true
             
+            // Etiquetas esenciales
             npc.addCommandTag("cobbletrainer_npc")
+            npc.addCommandTag("cobbletrainer_id:$trainerId")
+            
             npc.setAiDisabled(true)
             npc.isInvulnerable = true
+            npc.isPersistent = true // NUNCA desaparece al reiniciar el servidor
 
+            if (!level.spawnEntity(npc)) return ChallengeResult.BattleError("Error al spawnear")
+
+            ChallengeResult.Started
+        } catch (e: Exception) {
+            ChallengeResult.BattleError(e.message ?: "Error desconocido")
+        }
+    }
+
+    // NUEVO: Borrar NPC Buggeado/Frente al jugador
+    fun deleteNearestNpc(player: ServerPlayerEntity) {
+        val world = player.serverWorld
+        val box = player.boundingBox.expand(4.0) // Busca en un radio de 4 bloques
+        val npcs = world.getOtherEntities(player, box) { 
+            it is NPCEntity && it.commandTags.contains("cobbletrainer_npc") 
+        }
+        
+        if (npcs.isEmpty()) {
+            player.sendMessage(Text.literal("§cNo hay entrenadores de CobbleTrainer cerca de ti."), false)
+            return
+        }
+
+        val nearest = npcs.minByOrNull { it.squaredDistanceTo(player) }
+        nearest?.discard()
+        player.sendMessage(Text.literal("§aEntrenador eliminado correctamente del mundo."), false)
+    }
+
+    // LÓGICA DE BATALLA: Se ejecuta por separado para cada jugador que da clic
+    private fun tryChallenge(player: ServerPlayerEntity, npc: NPCEntity, trainerId: String): ChallengeResult {
+        val config = CobbleTrainerConfig.getById(trainerId) ?: return ChallengeResult.NotFound
+        if (!config.enabled) return ChallengeResult.Disabled
+
+        val cooldownKey = "${trainerId}:${player.uuid}"
+        val now = System.currentTimeMillis()
+        val expiry = cooldowns[cooldownKey] ?: 0L
+        if (now < expiry) return ChallengeResult.OnCooldown((expiry - now) / 1000L)
+
+        val party = Cobblemon.storage.getParty(player)
+        if (party.none { !it.isFainted() }) return ChallengeResult.NoHealthyPokemon
+
+        val trainerTeam = buildTrainerTeam(config)
+        if (trainerTeam.isEmpty()) return ChallengeResult.EmptyTeam
+
+        return try {
+            // Asignamos el equipo FRESCO al NPC justo en este milisegundo.
+            // Cobblemon hará una copia de este equipo para el combate del jugador.
+            // Así garantizamos que múltiples batallas simultáneas no se mezclen.
             val npcParty = NPCPartyStore(npc)
             trainerTeam.forEachIndexed { i, p -> npcParty.set(i, p) }
             npcParty.initialize()
             npc.party = npcParty
 
-            if (!level.spawnEntity(npc)) return ChallengeResult.BattleError("Error al spawnear")
+            BattleBuilder.pvn(player, npc)
 
-            activeNpcs[npc.uuid] = NpcData(npc.uuid, player.uuid, System.currentTimeMillis())
+            // Guardamos el contexto específico de ESTE jugador
             activeChallenges[player.uuid] = BattleContext(npc.uuid, config.id, config)
             
             ChallengeResult.Started
@@ -211,5 +235,4 @@ object TrainerManager {
 }
 
 data class BattleContext(val npcUuid: UUID, val trainerId: String, val config: TrainerConfig)
-data class NpcData(val npcUuid: UUID, val playerUuid: UUID, val startTime: Long, var battleStarted: Boolean = false, var endTime: Long = 0L)
 sealed class ChallengeResult { object Started : ChallengeResult(); object NotFound : ChallengeResult(); object Disabled : ChallengeResult(); object NoHealthyPokemon : ChallengeResult(); object EmptyTeam : ChallengeResult(); data class OnCooldown(val secondsRemaining: Long) : ChallengeResult(); data class BattleError(val reason: String) : ChallengeResult() }
