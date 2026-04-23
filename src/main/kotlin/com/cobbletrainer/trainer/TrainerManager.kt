@@ -12,6 +12,8 @@ import com.cobblemon.mod.common.battles.BattleSide
 import com.cobblemon.mod.common.battles.BattleFormat
 import com.cobblemon.mod.common.battles.actor.PlayerBattleActor
 import com.cobblemon.mod.common.battles.pokemon.BattlePokemon
+import com.cobblemon.mod.common.battles.actor.TrainerBattleActor
+import com.cobblemon.mod.common.battles.ai.RandomBattleAI
 import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
@@ -71,44 +73,8 @@ object TrainerManager {
     }
 
     private fun createNpcActor(uuid: UUID, name: String, pokemons: List<BattlePokemon>): com.cobblemon.mod.common.api.battles.model.actor.BattleActor {
-        val clazz = Class.forName("com.cobblemon.mod.common.battles.actor.TrainerBattleActor")
-        val battleAiClass = Class.forName("com.cobblemon.mod.common.api.battles.model.ai.BattleAI")
-        val passActionResponseClass = Class.forName("com.cobblemon.mod.common.battles.PassActionResponse")
-        val passActionResponse = passActionResponseClass.getField("INSTANCE").get(null)
-
-        val battleAi = java.lang.reflect.Proxy.newProxyInstance(
-            battleAiClass.classLoader,
-            arrayOf(battleAiClass)
-        ) { proxy, method, args ->
-            when (method.name) {
-                "choose" -> passActionResponse
-                "onHealthChange" -> null
-                "toString" -> "CobbleTrainerBattleAIProxy"
-                "hashCode" -> System.identityHashCode(proxy)
-                "equals" -> proxy === args?.getOrNull(0)
-                else -> when (method.returnType) {
-                    java.lang.Boolean.TYPE -> false
-                    java.lang.Byte.TYPE -> 0.toByte()
-                    java.lang.Short.TYPE -> 0.toShort()
-                    java.lang.Integer.TYPE -> 0
-                    java.lang.Long.TYPE -> 0L
-                    java.lang.Float.TYPE -> 0f
-                    java.lang.Double.TYPE -> 0.0
-                    java.lang.Character.TYPE -> '\u0000'
-                    else -> null
-                }
-            }
-        }
-
-        val ctor = clazz.getConstructor(
-            String::class.java,
-            UUID::class.java,
-            java.util.List::class.java,
-            battleAiClass
-        )
-
-        @Suppress("UNCHECKED_CAST")
-        return ctor.newInstance(name, uuid, pokemons, battleAi) as com.cobblemon.mod.common.api.battles.model.actor.BattleActor
+        // Instanciamos el actor directamente usando la IA aleatoria nativa de Cobblemon
+        return TrainerBattleActor(name, uuid, pokemons, RandomBattleAI())
     }
 
     fun challenge(player: ServerPlayerEntity, trainerId: String): ChallengeResult {
