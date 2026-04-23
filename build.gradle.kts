@@ -29,7 +29,10 @@ dependencies {
     modImplementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
     modImplementation("net.fabricmc:fabric-language-kotlin:$fabricLanguageKotlinVersion")
     modImplementation("com.cobblemon:fabric:$cobblemonVersion")
-    modImplementation("com.github.wisp-forest:cobblemonnpcs:1.7.3-1.21.1") // Cambia la versión si es necesario
+    
+    // Cargar CobblemonNPCs directamente desde la carpeta local
+    modImplementation(files("libs/cobblemonnpcs-1.7.3-1.21.1.jar")) 
+    
     include(implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")!!)
 }
 
