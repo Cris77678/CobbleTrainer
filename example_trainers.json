@@ -1,0 +1,87 @@
+[
+  {
+    "id": "elite_ev_trainer",
+    "name": "§6Elite EV Trainer",
+    "team": [
+      {
+        "species": "garchomp",
+        "level": 100,
+        "nature": "jolly",
+        "ability": "roughskin",
+        "heldItem": "",
+        "moves": ["earthquake", "outrage", "stoneedge", "swordsdance"],
+        "ivHp": 31,
+        "ivAtk": 31,
+        "ivDef": 31,
+        "ivSpAtk": 0,
+        "ivSpDef": 31,
+        "ivSpd": 31
+      },
+      {
+        "species": "toxapex",
+        "level": 100,
+        "nature": "bold",
+        "ability": "regenerator",
+        "heldItem": "",
+        "moves": ["scald", "recover", "toxicspikes", "haze"],
+        "ivHp": 31,
+        "ivAtk": 0,
+        "ivDef": 31,
+        "ivSpAtk": 31,
+        "ivSpDef": 31,
+        "ivSpd": 31
+      }
+    ],
+    "evRewards": [
+      { "stat": "ATTACK", "amount": 252 },
+      { "stat": "SPEED",  "amount": 252 }
+    ],
+    "expMultiplier": 2.0,
+    "cooldownSeconds": 300,
+    "importParty": false,
+    "enabled": true
+  },
+  {
+    "id": "bulk_trainer",
+    "name": "§9Bulk Builder",
+    "team": [
+      {
+        "species": "blissey",
+        "level": 100,
+        "nature": "calm",
+        "ability": "naturalcure",
+        "heldItem": "",
+        "moves": ["softboiled", "seismictoss", "toxic", "protect"],
+        "ivHp": 31,
+        "ivAtk": 0,
+        "ivDef": 31,
+        "ivSpAtk": 31,
+        "ivSpDef": 31,
+        "ivSpd": 31
+      },
+      {
+        "species": "corviknight",
+        "level": 100,
+        "nature": "impish",
+        "ability": "pressuremirrorarmor",
+        "heldItem": "",
+        "moves": ["bodypress", "roost", "defog", "irondefense"],
+        "ivHp": 31,
+        "ivAtk": 31,
+        "ivDef": 31,
+        "ivSpAtk": 0,
+        "ivSpDef": 31,
+        "ivSpd": 31
+      }
+    ],
+    "evRewards": [
+      { "stat": "HP",              "amount": 252 },
+      { "stat": "DEFENCE",         "amount": 128 },
+      { "stat": "SPECIAL_DEFENCE", "amount": 128 }
+    ],
+    "expMultiplier": 1.5,
+    "cooldownSeconds": 600,
+    "importParty": false,
+    "enabled": true
+  }
+]
