@@ -44,30 +44,38 @@ object TrainerManager {
         ServerTickEvents.END_SERVER_TICK.register { srv ->
             val now = System.currentTimeMillis()
             val iter = activeNpcs.entries.iterator()
+            
             while (iter.hasNext()) {
                 val entry = iter.next()
                 val data = entry.value
+                val player = srv.playerManager.getPlayer(data.playerUuid)
+                val inBattle = player != null && Cobblemon.battleRegistry.getBattleByParticipatingPlayer(player) != null
                 
-                if (now - data.startTime > 60000L) {
-                    val player = srv.playerManager.getPlayer(data.playerUuid)
-                    val inBattle = player != null && Cobblemon.battleRegistry.getBattleByParticipatingPlayer(player) != null
-                    
-                    if (!inBattle) {
-                        srv.worlds.forEach { world ->
-                            world.getEntity(data.npcUuid)?.discard()
-                        }
-                        activeChallenges.remove(data.playerUuid) // Previene memory leaks
+                // Si el jugador entra en combate, cambiamos el estado
+                if (inBattle) {
+                    data.battleStarted = true
+                }
+
+                if (!data.battleStarted) {
+                    // Si no ha iniciado el combate, tiene 60 segundos para darle clic
+                    if (now - data.startTime > 60000L) {
+                        srv.worlds.forEach { world -> world.getEntity(data.npcUuid)?.discard() }
+                        activeChallenges.remove(data.playerUuid)
                         iter.remove()
                     }
-                } else if (now - data.startTime > 3000L) {
-                    val player = srv.playerManager.getPlayer(data.playerUuid)
-                    val inBattle = player != null && Cobblemon.battleRegistry.getBattleByParticipatingPlayer(player) != null
+                } else {
+                    // Si ya inició el combate, esperamos a que termine (inBattle vuelve a false)
                     if (!inBattle) {
-                        srv.worlds.forEach { world ->
-                            world.getEntity(data.npcUuid)?.discard()
+                        srv.worlds.forEach { world -> world.getEntity(data.npcUuid)?.discard() }
+                        
+                        // Damos 2 segundos de gracia extra antes de borrar el desafío
+                        // Esto asegura que el BattleListener tenga tiempo de dar las recompensas de EVs y EXP
+                        if (data.endTime == 0L) {
+                            data.endTime = now
+                        } else if (now - data.endTime > 2000L) {
+                            activeChallenges.remove(data.playerUuid)
+                            iter.remove()
                         }
-                        activeChallenges.remove(data.playerUuid) // Previene memory leaks
-                        iter.remove()
                     }
                 }
             }
@@ -130,7 +138,6 @@ object TrainerManager {
             val npcClass = NPCClasses.getByName("standard") ?: NPCClasses.random()
             npc.npc = npcClass
             
-            // Usamos refreshPositionAndAngles que es el equivalente a moveTo en Yarn
             npc.refreshPositionAndAngles(spawnX, spawnY, spawnZ, player.yaw, 0f)
             npc.headYaw = player.yaw
             
@@ -153,6 +160,7 @@ object TrainerManager {
             }
 
             val npcUuid = npc.uuid
+            // Registramos al NPC con nuestra nueva clase NpcData
             activeNpcs[npcUuid] = NpcData(npcUuid, player.uuid, System.currentTimeMillis())
             activeChallenges[player.uuid] = BattleContext(npcUuid, config.id, config)
             
@@ -227,10 +235,13 @@ data class BattleContext(
     val config: TrainerConfig
 )
 
+// Añadimos las variables 'battleStarted' y 'endTime' a la memoria del bot
 data class NpcData(
     val npcUuid: UUID, 
     val playerUuid: UUID, 
-    val startTime: Long
+    val startTime: Long,
+    var battleStarted: Boolean = false,
+    var endTime: Long = 0L
 )
 
 sealed class ChallengeResult {
