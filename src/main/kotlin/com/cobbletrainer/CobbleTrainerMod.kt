@@ -9,10 +9,14 @@ import net.fabricmc.api.ModInitializer
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import org.slf4j.LoggerFactory
 
-object CobbleTrainerMod : ModInitializer {
+// 1. Cambiamos 'object' por 'class' para que Fabric pueda instanciarlo
+class CobbleTrainerMod : ModInitializer {
 
-    const val MOD_ID = "cobbletrainer"
-    val LOGGER = LoggerFactory.getLogger(MOD_ID)
+    // 2. Metemos las constantes globales en un companion object
+    companion object {
+        const val MOD_ID = "cobbletrainer"
+        val LOGGER = LoggerFactory.getLogger(MOD_ID)
+    }
 
     override fun onInitialize() {
         LOGGER.info("═══════════════════════════════════════")
