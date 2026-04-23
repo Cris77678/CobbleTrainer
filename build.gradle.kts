@@ -31,7 +31,7 @@ dependencies {
     modImplementation("com.cobblemon:fabric:$cobblemonVersion")
     
     // Cargar CobblemonNPCs directamente desde la carpeta local
-    modImplementation(files("libs/cobblemonnpcs-1.7.3-1.21.1.jar")) 
+    modImplementation(files("libs/cobblemonnpcs-v4.jar"))
     
     include(implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")!!)
 }
