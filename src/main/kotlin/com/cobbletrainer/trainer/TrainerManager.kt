@@ -14,6 +14,7 @@ import com.cobblemon.mod.common.entity.npc.NPCEntity
 import com.cobblemon.mod.common.battles.BattleBuilder
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
 import net.fabricmc.fabric.api.event.player.UseEntityCallback
+import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.text.Text
@@ -51,7 +52,8 @@ object TrainerManager {
                 if (data != null && data.playerUuid == serverPlayer.uuid) {
                     if (!data.battleStarted) {
                         try {
-                            BattleBuilder.INSTANCE.pvn(serverPlayer, entity)
+                            // En Kotlin se llama al método directamente, sin .INSTANCE
+                            BattleBuilder.pvn(serverPlayer, entity)
                         } catch (e: Exception) {
                             CobbleTrainerMod.LOGGER.error("Error al iniciar batalla: ${e.message}")
                         }
@@ -108,7 +110,6 @@ object TrainerManager {
             val npc = NPCEntity(level)
             npc.npc = NPCClasses.getByName("standard") ?: NPCClasses.random()
             
-            // FIX: Nombre y visibilidad (Yarn Mappings)
             npc.refreshPositionAndAngles(spawnX, player.y, spawnZ, player.yaw, 0f)
             npc.headYaw = player.yaw
             npc.customName = Text.literal("§6[Entrenador] §e${config.name}")
@@ -118,11 +119,10 @@ object TrainerManager {
             npc.setAiDisabled(true)
             npc.isInvulnerable = true
 
-            // FIX: Asignación de Equipo (NPCPartyStore)
             val npcParty = NPCPartyStore(npc)
             trainerTeam.forEachIndexed { i, p -> npcParty.set(i, p) }
             npcParty.initialize()
-            npc.party = npcParty // Asignación final de la party
+            npc.party = npcParty
 
             if (!level.spawnEntity(npc)) return ChallengeResult.BattleError("Error al spawnear")
 
@@ -144,7 +144,6 @@ object TrainerManager {
                 
                 val pokemon = PokemonProperties.parse(propStr).create()
                 
-                // Aplicar IVs y EVs en orden (HP, Atk, Def, SpAtk, SpDef, Spd)
                 val statsOrder = Stats.values()
                 val ivs = intArrayOf(entry.ivHp, entry.ivAtk, entry.ivDef, entry.ivSpAtk, entry.ivSpDef, entry.ivSpd)
                 statsOrder.forEachIndexed { i, stat -> if(i < 6) pokemon.ivs[stat] = ivs[i] }
@@ -161,12 +160,54 @@ object TrainerManager {
         }
     }
 
-    // ... (Mantén el resto de funciones load/save intactas)
-    fun loadCooldowns() { /* ... */ }
-    fun saveCooldowns() { /* ... */ }
-    fun onBattleWon(p: UUID, t: String, c: Long) { /* ... */ }
+    fun loadCooldowns() {
+        try {
+            if (Files.exists(cooldownsFile)) {
+                val raw = Files.readString(cooldownsFile)
+                val loaded = json.decodeFromString<Map<String, Long>>(raw)
+                cooldowns.clear()
+                cooldowns.putAll(loaded)
+            }
+        } catch (e: Exception) {
+            CobbleTrainerMod.LOGGER.error("Failed to load cooldowns: ${e.message}")
+        }
+    }
+    
+    fun saveCooldowns() {
+        try {
+            Files.createDirectories(cooldownsFile.parent)
+            val data = cooldowns.toMap()
+            Files.writeString(cooldownsFile, json.encodeToString(data))
+        } catch (e: Exception) {
+            CobbleTrainerMod.LOGGER.error("Failed to save cooldowns: ${e.message}")
+        }
+    }
+    
+    fun onBattleWon(p: UUID, t: String, c: Long) {
+        if (c > 0) {
+            cooldowns["${t}:${p}"] = System.currentTimeMillis() + c * 1000L
+            saveCooldowns()
+        }
+    }
+    
     fun trainerCount() = CobbleTrainerConfig.trainers.size
+    
     fun saveAll() { CobbleTrainerConfig.save(); saveCooldowns() }
+    
+    fun getCooldownRemaining(player: ServerPlayerEntity, trainerId: String): Long {
+        val expiry = cooldowns["${trainerId}:${player.uuid}"] ?: return 0L
+        return ((expiry - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
+    }
+
+    fun clearCooldown(player: ServerPlayerEntity, trainerId: String) {
+        cooldowns.remove("${trainerId}:${player.uuid}")
+        saveCooldowns()
+    }
+
+    fun clearAllCooldowns(trainerId: String) {
+        cooldowns.keys.removeIf { it.startsWith("${trainerId}:") }
+        saveCooldowns()
+    }
 }
 
 data class BattleContext(val npcUuid: UUID, val trainerId: String, val config: TrainerConfig)
