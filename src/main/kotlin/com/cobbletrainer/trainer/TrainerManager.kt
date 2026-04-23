@@ -56,15 +56,17 @@ object TrainerManager {
                         srv.worlds.forEach { world ->
                             world.getEntity(data.npcUuid)?.discard()
                         }
+                        activeChallenges.remove(data.playerUuid) // Previene memory leaks
                         iter.remove()
                     }
                 } else if (now - data.startTime > 3000L) {
                     val player = srv.playerManager.getPlayer(data.playerUuid)
                     val inBattle = player != null && Cobblemon.battleRegistry.getBattleByParticipatingPlayer(player) != null
-                    if (!inBattle && !activeChallenges.containsKey(data.playerUuid)) {
+                    if (!inBattle) {
                         srv.worlds.forEach { world ->
                             world.getEntity(data.npcUuid)?.discard()
                         }
+                        activeChallenges.remove(data.playerUuid) // Previene memory leaks
                         iter.remove()
                     }
                 }
@@ -127,7 +129,9 @@ object TrainerManager {
             val npc = NPCEntity(level)
             val npcClass = NPCClasses.getByName("standard") ?: NPCClasses.random()
             npc.npc = npcClass
-            npc.moveTo(spawnX, spawnY, spawnZ, player.yaw, 0f)
+            
+            // Usamos refreshPositionAndAngles que es el equivalente a moveTo en Yarn
+            npc.refreshPositionAndAngles(spawnX, spawnY, spawnZ, player.yaw, 0f)
             npc.headYaw = player.yaw
             
             npc.addCommandTag("cobbletrainer_npc")
@@ -135,8 +139,7 @@ object TrainerManager {
             npc.isCustomNameVisible = true
             npc.skill = 3
             npc.isInvulnerable = true
-            npc.isPersistent = true
-            npc.isAiDisabled = true
+            npc.setAiDisabled(true)
 
             val npcParty = NPCPartyStore(npc)
             trainerTeam.forEachIndexed { index, pokemon ->
@@ -195,7 +198,6 @@ object TrainerManager {
                 }
                 
                 pokemon.persistentData.putBoolean("cobbletrainer_npc_pokemon", true)
-                pokemon.isTradeable = false
                 pokemon.heal()
                 
                 pokemon
